@@ -1,12 +1,10 @@
 import SwiftUI
 
-/// The design is a fixed 393pt-wide canvas (iPhone 15 Pro logical width).
-/// The native status bar and home indicator replace the mocked ones from
-/// the design; everything between is scaled uniformly to fit the device.
+/// The design is a fixed 393x852 canvas (iPhone 15 Pro logical size),
+/// including the mocked status bar and home indicator from the Figma frame.
+/// The real system chrome is hidden and the canvas scales to fit the device.
 struct HomeView: View {
-    /// Design canvas height: 852 minus the mocked status bar (59)
-    /// and home indicator area (34)
-    private let canvasSize = CGSize(width: 393, height: 759)
+    private let canvasSize = CGSize(width: 393, height: 852)
 
     var body: some View {
         GeometryReader { geo in
@@ -16,16 +14,16 @@ struct HomeView: View {
                 .scaleEffect(scale)
                 .frame(width: geo.size.width, height: geo.size.height)
         }
-        .background(alignment: .bottom) {
-            // the tab bar's white extends into the bottom safe area
-            Color.white.frame(height: 120).ignoresSafeArea(edges: .bottom)
-        }
         .background(Palette.background.ignoresSafeArea())
+        .ignoresSafeArea()
+        .statusBarHidden(true)
+        .persistentSystemOverlays(.hidden)
     }
 
     private var canvas: some View {
         ZStack(alignment: .bottom) {
             VStack(spacing: 0) {
+                StatusBarView()
                 TopBar()
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 0) {
@@ -33,16 +31,19 @@ struct HomeView: View {
                             .frame(width: 393, height: 301)
                         SubscriptionListView()
                         // room so the list can scroll clear of the tab bar
-                        Color.clear.frame(height: 76)
+                        Color.clear.frame(height: 110)
                     }
                 }
             }
 
-            TabBar()
+            VStack(spacing: 0) {
+                TabBar()
+                HomeIndicatorView()
+            }
 
             fab
                 .padding(.trailing, 20)
-                .padding(.bottom, 76)
+                .padding(.bottom, 110)
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .background(Palette.background)
