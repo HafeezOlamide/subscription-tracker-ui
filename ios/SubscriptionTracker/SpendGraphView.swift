@@ -40,24 +40,26 @@ struct SpendGraphView: View {
                 .frame(width: 393, height: 137)
                 .offset(y: plotTop)
 
+            // scrub anywhere across the plot — kept BENEATH the dot so the
+            // dot's own tap/drag gesture wins when touching it directly
+            Color.clear
+                .contentShape(Rectangle())
+                .frame(width: 393, height: 153)
+                .offset(y: 116)
+                .gesture(
+                    DragGesture(minimumDistance: 0, coordinateSpace: .named("graph"))
+                        .onChanged { value in pickDay(at: value.location.x) }
+                )
+
             dashedMarker
             graphDot
             tooltip
 
             DateRail(selectedDay: $selectedDay, onSelect: select(day:))
                 .offset(y: railTop)
-
-            // scrub anywhere across the plot
-            Color.clear
-                .contentShape(Rectangle())
-                .frame(width: 393, height: 153)
-                .offset(y: 116)
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { value in pickDay(at: value.location.x) }
-                )
         }
         .frame(width: 393, height: 301, alignment: .topLeading)
+        .coordinateSpace(name: "graph")
     }
 
     // MARK: - Pieces
@@ -155,13 +157,12 @@ struct SpendGraphView: View {
                 .fill(LinearGradient(colors: [Palette.wine, Palette.flame], startPoint: .top, endPoint: .bottom))
                 .frame(width: 8, height: 8)
         }
-        .position(dotCenter)
-        .opacity(onChart ? 1 : 0)
-        .animation(.easeInOut(duration: 0.25), value: dotCenter)
-        .animation(.easeInOut(duration: 0.25), value: onChart)
+        .frame(width: 20, height: 20)
+        // generous 40pt touch target; hit shape scoped to the dot itself,
+        // and drag locations read in the graph's coordinate space
         .contentShape(Circle().inset(by: -10))
         .gesture(
-            DragGesture(minimumDistance: 0)
+            DragGesture(minimumDistance: 0, coordinateSpace: .named("graph"))
                 .onChanged { value in
                     if abs(value.translation.width) > 3 { dotDragMoved = true }
                     if dotDragMoved { pickDay(at: value.location.x) }
@@ -173,6 +174,10 @@ struct SpendGraphView: View {
                     dotDragMoved = false
                 }
         )
+        .position(dotCenter)
+        .opacity(onChart ? 1 : 0)
+        .animation(.easeInOut(duration: 0.25), value: dotCenter)
+        .animation(.easeInOut(duration: 0.25), value: onChart)
     }
 
     private var tooltip: some View {
