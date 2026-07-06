@@ -18,6 +18,16 @@ A pixel-perfect implementation of a Figma subscription-tracker home screen (393�
 - `styles.css` — all styling, values taken 1:1 from the Figma design
 - `app.js` — calendar strip, graph scrubbing, tooltip, and card animations
 - `assets/` — original SVG assets exported from the Figma file
+- `ios/` — native SwiftUI port (see below)
+
+## iOS (SwiftUI)
+
+`ios/SubscriptionTracker.xcodeproj` is a native SwiftUI port of the same screen:
+open it in Xcode 16+, pick an iPhone simulator, and run. It bundles the Geist and
+Inter fonts, draws the spend curve natively with `Path`, and recreates all the
+interactions — graph scrubbing, draggable dot, tooltip fade, scrollable date rail,
+and the animated expanding subscription card. The design's mocked status bar and
+home indicator are replaced by the real iOS ones.
 
 ## Run locally
 
