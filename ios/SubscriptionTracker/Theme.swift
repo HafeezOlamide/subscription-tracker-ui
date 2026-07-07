@@ -37,28 +37,58 @@ enum AppFont {
 
 // MARK: - Graph data
 
-/// Spend curve polyline from the design's SVG path,
-/// x across the 393pt width, y within the 137pt-tall plot (origin at plot top)
-let spendCurve: [CGPoint] = [
-    CGPoint(x: 0.5, y: 136.546),
-    CGPoint(x: 10.6845, y: 136.546),
-    CGPoint(x: 41.5, y: 116.975),
-    CGPoint(x: 66, y: 116.975),
-    CGPoint(x: 101.5, y: 61.72),
-    CGPoint(x: 161.5, y: 55.7515),
-    CGPoint(x: 341.5, y: 0.478),
+/// Cumulative spend curve for the whole month in the design's plot units:
+/// x in day-space, y within the 137pt-tall plot (lower y = higher spend).
+/// Days 17.3-23 keep the exact vertex geometry of the Figma curve, so the
+/// default window (18-23) renders identical to the design.
+let curveVertices: [(day: CGFloat, y: CGFloat)] = [
+    (1, 132), (2, 127), (3, 128.5), (4, 121), (5, 116), (6, 117.5),
+    (7, 110), (8, 112), (9, 104), (10, 106), (11, 99), (12, 101),
+    (13, 95), (14, 97), (15, 108), (16, 122), (17, 134),
+    (17.325, 136.546), (17.494, 136.546), (18.008, 116.975), (18.417, 116.975),
+    (19.008, 61.72), (20.008, 55.7515), (23.008, 0.478),
+    (24, -6), (25, -20), (26, -45), (27, -49), (28, -63), (29, -67), (30, -77), (31, -83),
 ]
 
-func curveY(at x: CGFloat) -> CGFloat {
-    guard let first = spendCurve.first, let last = spendCurve.last else { return 0 }
-    if x <= first.x { return first.y }
-    for i in 1..<spendCurve.count {
-        let p0 = spendCurve[i - 1], p1 = spendCurve[i]
-        if x <= p1.x {
-            return p0.y + (x - p0.x) / (p1.x - p0.x) * (p1.y - p0.y)
+func rawY(atDay d: CGFloat) -> CGFloat {
+    guard let first = curveVertices.first, let last = curveVertices.last else { return 0 }
+    if d <= first.day { return first.y }
+    for i in 1..<curveVertices.count {
+        let a = curveVertices[i - 1], b = curveVertices[i]
+        if d <= b.day {
+            return a.y + (d - a.day) / (b.day - a.day) * (b.y - a.y)
         }
     }
     return last.y
+}
+
+/// Vertical normalization of the visible window: the default window (18-23)
+/// maps 1:1 to the design; other windows fill the plot sensibly.
+struct NormBounds {
+    let hi: CGFloat
+    let span: CGFloat
+}
+
+func normBounds(offset o: CGFloat) -> NormBounds {
+    var lo = CGFloat.greatestFiniteMagnitude
+    var hi = -CGFloat.greatestFiniteMagnitude
+    var d = o - 0.6833
+    while d <= o + 5.0167 {
+        let y = rawY(atDay: d)
+        lo = min(lo, y)
+        hi = max(hi, y)
+        d += 0.05
+    }
+    return NormBounds(hi: hi, span: max(hi - lo, 20))
+}
+
+func normY(_ y: CGFloat, _ b: NormBounds) -> CGFloat {
+    136.546 - (b.hi - y) * (136.068 / b.span)
+}
+
+/// x position of day d when the chart window starts at (fractional) offset o
+func windowX(day d: CGFloat, offset o: CGFloat) -> CGFloat {
+    (d - o) * 60 + 41
 }
 
 struct DayDelta {
@@ -66,23 +96,40 @@ struct DayDelta {
     let percent: String
 }
 
-/// Daily spend deltas for the charted window; day 23 keeps the design's values
+/// Daily spend deltas for every day; 18-23 keep the design's values
 let dayDeltas: [Int: DayDelta] = [
+    1: DayDelta(amount: "+$2.99", percent: "(+2%)"),
+    2: DayDelta(amount: "+$1.49", percent: "(+1%)"),
+    3: DayDelta(amount: "+$4.99", percent: "(+3%)"),
+    4: DayDelta(amount: "+$0.99", percent: "(+1%)"),
+    5: DayDelta(amount: "+$7.99", percent: "(+4%)"),
+    6: DayDelta(amount: "+$2.49", percent: "(+1%)"),
+    7: DayDelta(amount: "+$5.99", percent: "(+3%)"),
+    8: DayDelta(amount: "+$1.99", percent: "(+1%)"),
+    9: DayDelta(amount: "+$9.99", percent: "(+5%)"),
+    10: DayDelta(amount: "+$3.49", percent: "(+2%)"),
+    11: DayDelta(amount: "+$6.99", percent: "(+3%)"),
+    12: DayDelta(amount: "+$2.99", percent: "(+1%)"),
+    13: DayDelta(amount: "+$8.49", percent: "(+4%)"),
+    14: DayDelta(amount: "+$4.49", percent: "(+2%)"),
+    15: DayDelta(amount: "+$10.99", percent: "(+5%)"),
+    16: DayDelta(amount: "+$3.99", percent: "(+2%)"),
+    17: DayDelta(amount: "+$5.49", percent: "(+2%)"),
     18: DayDelta(amount: "+$4.20", percent: "(+2%)"),
     19: DayDelta(amount: "+$18.50", percent: "(+8%)"),
     20: DayDelta(amount: "+$2.99", percent: "(+1%)"),
     21: DayDelta(amount: "+$11.99", percent: "(+5%)"),
     22: DayDelta(amount: "+$8.00", percent: "(+3%)"),
     23: DayDelta(amount: "+$25.00", percent: "(+1%)"),
+    24: DayDelta(amount: "+$2.99", percent: "(+1%)"),
+    25: DayDelta(amount: "+$8.00", percent: "(+3%)"),
+    26: DayDelta(amount: "+$25.00", percent: "(+9%)"),
+    27: DayDelta(amount: "+$1.99", percent: "(+1%)"),
+    28: DayDelta(amount: "+$11.99", percent: "(+4%)"),
+    29: DayDelta(amount: "+$3.49", percent: "(+1%)"),
+    30: DayDelta(amount: "+$8.00", percent: "(+3%)"),
+    31: DayDelta(amount: "+$5.99", percent: "(+2%)"),
 ]
-
-let chartedDays = [18, 19, 20, 21, 22, 23]
-
-/// A day's marker position across the fixed graph, matching the design:
-/// the date rail cell for day d is centered at (d-1)*60 - 979
-func dayX(_ day: Int) -> CGFloat {
-    CGFloat(day - 1) * 60 - 979
-}
 
 // MARK: - Subscriptions
 

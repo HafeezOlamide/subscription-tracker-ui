@@ -38,38 +38,56 @@ function buildStrip(activeDay) {
 }
 buildStrip(23);
 
-// ---- Interactive graph annotation ----
-// Polyline of the spend curve (graph-line.svg path), relative to the
-// graph container: x from left edge, y offset from top 132px.
-const CURVE = [
-  [0.5, 136.546], [10.6845, 136.546], [41.5, 116.975], [66, 116.975],
-  [101.5, 61.72], [161.5, 55.7515], [341.5, 0.478],
+// ---- Graph model ----
+// Cumulative spend curve for the whole month in the design's plot units:
+// x in day-space, y within the 137px-tall plot (lower y = higher spend).
+// Days 17.3-23 keep the exact vertex geometry of the Figma curve, so the
+// default window (18-23) renders pixel-identical to the design.
+const CURVE_VERTICES = [
+  [1, 132], [2, 127], [3, 128.5], [4, 121], [5, 116], [6, 117.5],
+  [7, 110], [8, 112], [9, 104], [10, 106], [11, 99], [12, 101],
+  [13, 95], [14, 97], [15, 108], [16, 122], [17, 134],
+  [17.325, 136.546], [17.494, 136.546], [18.008, 116.975], [18.417, 116.975],
+  [19.008, 61.72], [20.008, 55.7515], [23.008, 0.478],
+  [24, -6], [25, -20], [26, -45], [27, -49], [28, -63], [29, -67], [30, -77], [31, -83],
 ];
 
-function curveY(x) {
-  if (x <= CURVE[0][0]) return CURVE[0][1];
-  for (let i = 1; i < CURVE.length; i++) {
-    const [x0, y0] = CURVE[i - 1];
-    const [x1, y1] = CURVE[i];
-    if (x <= x1) return y0 + ((x - x0) / (x1 - x0)) * (y1 - y0);
+function rawY(d) {
+  const v = CURVE_VERTICES;
+  if (d <= v[0][0]) return v[0][1];
+  for (let i = 1; i < v.length; i++) {
+    if (d <= v[i][0]) {
+      const [a, ya] = v[i - 1];
+      const [b, yb] = v[i];
+      return ya + ((d - a) / (b - a)) * (yb - ya);
+    }
   }
-  return CURVE[CURVE.length - 1][1];
+  return v[v.length - 1][1];
 }
 
-// Daily spend deltas for the days visible on the graph (18-23 June).
-// Day 23 keeps the exact values from the design.
+// Daily spend deltas; days 18-23 keep the design's values
 const DAY_INFO = {
-  18: { amount: '+$4.20', percent: '(+2%)' },
-  19: { amount: '+$18.50', percent: '(+8%)' },
-  20: { amount: '+$2.99', percent: '(+1%)' },
-  21: { amount: '+$11.99', percent: '(+5%)' },
-  22: { amount: '+$8.00', percent: '(+3%)' },
-  23: { amount: '+$25.00', percent: '(+1%)' },
+  1: ['+$2.99', '(+2%)'], 2: ['+$1.49', '(+1%)'], 3: ['+$4.99', '(+3%)'],
+  4: ['+$0.99', '(+1%)'], 5: ['+$7.99', '(+4%)'], 6: ['+$2.49', '(+1%)'],
+  7: ['+$5.99', '(+3%)'], 8: ['+$1.99', '(+1%)'], 9: ['+$9.99', '(+5%)'],
+  10: ['+$3.49', '(+2%)'], 11: ['+$6.99', '(+3%)'], 12: ['+$2.99', '(+1%)'],
+  13: ['+$8.49', '(+4%)'], 14: ['+$4.49', '(+2%)'], 15: ['+$10.99', '(+5%)'],
+  16: ['+$3.99', '(+2%)'], 17: ['+$5.49', '(+2%)'],
+  18: ['+$4.20', '(+2%)'], 19: ['+$18.50', '(+8%)'], 20: ['+$2.99', '(+1%)'],
+  21: ['+$11.99', '(+5%)'], 22: ['+$8.00', '(+3%)'], 23: ['+$25.00', '(+1%)'],
+  24: ['+$2.99', '(+1%)'], 25: ['+$8.00', '(+3%)'], 26: ['+$25.00', '(+9%)'],
+  27: ['+$1.99', '(+1%)'], 28: ['+$11.99', '(+4%)'], 29: ['+$3.49', '(+1%)'],
+  30: ['+$8.00', '(+3%)'], 31: ['+$5.99', '(+2%)'],
 };
 
-// Calendar strip geometry: day d's cell center lands at x = (d-1)*60 - 979
-const dayX = d => (d - 1) * 60 - 979;
-const DAYS = Object.keys(DAY_INFO).map(Number);
+// ---- Sliding chart window ----
+// The plot shows a 6-day window; day d of window starting at s is centered
+// at x = (d - s) * 60 + 41. Selecting a date outside the window slides the
+// whole curve so the marker always lands on the selected date.
+const WINDOW_LAST = 26; // latest possible windowStart (26..31)
+let windowStart = 18;
+let currentDay = 23;
+let offsetNow = 18; // animated fractional window position
 
 const dot = document.querySelector('.graph-dot');
 const tooltip = document.querySelector('.graph-tooltip');
@@ -78,51 +96,124 @@ const tooltipAmount = document.querySelector('.tooltip-amount');
 const tooltipPercent = document.querySelector('.tooltip-percent');
 const vline = document.querySelector('.vline');
 const plotHit = document.querySelector('.plot-hit');
+const curveLine = document.querySelector('.curve-line');
+const curveArea = document.querySelector('.curve-area');
 
 const TOOLTIP_W = 110;
 const TOOLTIP_H = 56;
 const STRIP_TOP = 269;
 
-let currentDay = 23;
+const xFor = (d, o) => (d - o) * 60 + 41;
 
-function setDay(day) {
-  if (day === currentDay) return;
-  currentDay = day;
-
-  // Days outside the charted 18-23 window aren't on the visible curve:
-  // move the highlight pill but fade out the dot, line, and tooltip
-  if (!(day in DAY_INFO)) {
-    dot.style.opacity = '0';
-    dot.style.pointerEvents = 'none';
-    vline.style.opacity = '0';
-    tooltip.classList.remove('show');
-    buildStrip(day);
-    return;
+// Normalize the visible stroke segment into the design's vertical range so
+// the default window maps 1:1 and other windows fill the plot sensibly.
+function normBounds(o) {
+  let lo = Infinity, hi = -Infinity;
+  for (let d = o - 0.6833; d <= o + 5.0167; d += 0.05) {
+    const y = rawY(d);
+    if (y < lo) lo = y;
+    if (y > hi) hi = y;
   }
-  dot.style.opacity = '';
-  dot.style.pointerEvents = '';
-  vline.style.opacity = '';
+  return { hi, span: Math.max(hi - lo, 20) };
+}
+const normY = (y, b) => 136.546 - (b.hi - y) * (136.068 / b.span);
 
-  const x = dayX(day);
-  // Day 23 uses the exact dot position from the design; others follow the curve
-  const dotTop = day === 23 ? 122 : 122 + curveY(x);
+function samplePoints(from, to) {
+  const pts = [[from, rawY(from)]];
+  for (const [vd, vy] of CURVE_VERTICES) {
+    if (vd > from && vd < to) pts.push([vd, vy]);
+  }
+  pts.push([to, rawY(to)]);
+  return pts;
+}
 
+function renderCurve(o) {
+  const b = normBounds(o);
+  const linePts = samplePoints(o - 0.6833, o + 5.0167);
+  const line = 'M' + linePts
+    .map(p => `${xFor(p[0], o).toFixed(2)} ${normY(p[1], b).toFixed(2)}`)
+    .join(' L');
+  // area fill continues to the right edge of the plot, like the design
+  const areaPts = samplePoints(o - 0.6833, o + 5.8667);
+  const area = 'M' + areaPts
+    .map(p => `${xFor(p[0], o).toFixed(2)} ${normY(p[1], b).toFixed(2)}`)
+    .join(' L') + ' L393 137 L0 137 Z';
+  curveLine.setAttribute('d', line);
+  curveArea.setAttribute('d', area);
+  return b;
+}
+
+function markerY(day, b) {
+  // day vertices sit at d+0.008 (the design's half-pixel offset)
+  return normY(rawY(Math.min(day + 0.008, 31)), b);
+}
+
+function setMarkerPositions(o, b) {
+  const x = xFor(currentDay, o);
+  const dotTop = 122 + markerY(currentDay, b);
   dot.style.left = (x - 10) + 'px';
   dot.style.top = dotTop + 'px';
   vline.style.left = x + 'px';
 
-  // Tooltip sits below the dot unless it would collide with the date strip
   const below = dotTop + 28;
   const top = below + TOOLTIP_H > STRIP_TOP ? dotTop - 8 - TOOLTIP_H : below;
   const left = Math.min(263, Math.max(10, x - 78));
   tooltip.style.left = left + 'px';
   tooltip.style.top = top + 'px';
+}
+
+// ---- Window slide animation ----
+let slideRaf = null;
+
+function animateWindow(target) {
+  if (slideRaf) cancelAnimationFrame(slideRaf);
+  const from = offsetNow;
+  const start = performance.now();
+  const DUR = 250;
+  const easeInOut = t => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+  [dot, vline, tooltip].forEach(el => el.classList.add('no-trans'));
+  const step = now => {
+    const t = Math.min((now - start) / DUR, 1);
+    offsetNow = from + (target - from) * easeInOut(t);
+    const b = renderCurve(offsetNow);
+    setMarkerPositions(offsetNow, b);
+    if (t < 1) {
+      slideRaf = requestAnimationFrame(step);
+    } else {
+      offsetNow = target;
+      slideRaf = null;
+      [dot, vline, tooltip].forEach(el => el.classList.remove('no-trans'));
+    }
+  };
+  slideRaf = requestAnimationFrame(step);
+}
+
+function setDay(day) {
+  if (day === currentDay) return;
+  currentDay = day;
 
   tooltipDate.textContent = day + ' Jun 2026';
-  tooltipAmount.textContent = DAY_INFO[day].amount;
-  tooltipPercent.textContent = DAY_INFO[day].percent;
-
+  tooltipAmount.textContent = DAY_INFO[day][0];
+  tooltipPercent.textContent = DAY_INFO[day][1];
   buildStrip(day);
+
+  // slide the window so the selected date sits at its right edge,
+  // matching the design's default (day 23 at the end of the chart)
+  let ns = windowStart;
+  if (day < ns || day > ns + 5) {
+    ns = Math.min(Math.max(day - 5, 1), WINDOW_LAST);
+  }
+
+  if (ns !== windowStart) {
+    windowStart = ns;
+    // keep the date rail aligned with the chart window
+    scroller.scrollTo({ left: (ns - 1) * 60 - 7, behavior: 'smooth' });
+    animateWindow(ns);
+  } else {
+    // marker glides via its CSS transitions
+    const b = renderCurve(offsetNow);
+    setMarkerPositions(offsetNow, b);
+  }
 }
 
 function pickDay(clientX) {
@@ -131,11 +222,8 @@ function pickDay(clientX) {
   // from screen pixels back into the design's 393px coordinate space
   const scale = rect.width / 393;
   const x = (clientX - rect.left) / scale;
-  let nearest = DAYS[0];
-  for (const d of DAYS) {
-    if (Math.abs(dayX(d) - x) < Math.abs(dayX(nearest) - x)) nearest = d;
-  }
-  setDay(nearest);
+  const k = Math.min(Math.max(Math.round((x - 41) / 60), 0), 5);
+  setDay(windowStart + k);
 }
 
 // The dot is both tappable and draggable: a plain tap shows/hides the
@@ -173,13 +261,12 @@ plotHit.addEventListener('pointerup', () => { scrubbing = false; });
 plotHit.addEventListener('pointercancel', () => { scrubbing = false; });
 
 // ---- Scrollable date rail ----
-// The graph stays fixed; only the dates scroll horizontally. Native touch
-// swipe works via overflow scrolling; mouse users can drag the rail; taps
-// on a date select it (suppressed if the gesture was a drag).
+// The dates scroll horizontally; tapping any date selects it and the chart
+// window slides so the marker lands on that date.
 const scroller = document.querySelector('.date-scroll');
 
 // Start scrolled so days 18-23 sit exactly where the design places them
-scroller.scrollLeft = 1013;
+scroller.scrollLeft = (windowStart - 1) * 60 - 7;
 
 let railDrag = null;
 scroller.addEventListener('pointerdown', e => {
@@ -198,7 +285,6 @@ scroller.addEventListener('pointermove', e => {
   if (railDrag.moved) scroller.scrollLeft = railDrag.startScroll - dx;
 });
 const endRailDrag = () => {
-  if (railDrag && !railDrag.moved) railDrag.tapped = true;
   scroller.classList.remove('dragging');
 };
 scroller.addEventListener('pointerup', e => {
@@ -218,6 +304,9 @@ scroller.addEventListener('wheel', e => {
     e.preventDefault();
   }
 }, { passive: false });
+
+// initial render (identical to the design)
+setMarkerPositions(offsetNow, renderCurve(offsetNow));
 
 // Toggle the iCloud+ card between collapsed and expanded states,
 // animating height and cross-fading content with ease-in-out

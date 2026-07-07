@@ -1,26 +1,85 @@
 import SwiftUI
 
-/// The fixed graph block (393x301): spend summary, curve, scrubbable
-/// annotation, and the horizontally scrollable date rail at the bottom.
+/// The spend curve for the current 6-day window; `offset` is the fractional
+/// window start so window changes pan smoothly.
+struct CurveLineShape: Shape {
+    var offset: CGFloat
+
+    var animatableData: CGFloat {
+        get { offset }
+        set { offset = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let b = normBounds(offset: offset)
+        var p = Path()
+        var first = true
+        for (d, y) in samples(from: offset - 0.6833, to: offset + 5.0167) {
+            let pt = CGPoint(x: windowX(day: d, offset: offset), y: normY(y, b))
+            if first { p.move(to: pt); first = false } else { p.addLine(to: pt) }
+        }
+        return p
+    }
+}
+
+/// The gradient fill under the curve; extends to the plot's right edge
+/// like the design's area shape.
+struct CurveAreaShape: Shape {
+    var offset: CGFloat
+
+    var animatableData: CGFloat {
+        get { offset }
+        set { offset = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let b = normBounds(offset: offset)
+        var p = Path()
+        var first = true
+        for (d, y) in samples(from: offset - 0.6833, to: offset + 5.8667) {
+            let pt = CGPoint(x: windowX(day: d, offset: offset), y: normY(y, b))
+            if first { p.move(to: pt); first = false } else { p.addLine(to: pt) }
+        }
+        p.addLine(to: CGPoint(x: 393, y: 137))
+        p.addLine(to: CGPoint(x: 0, y: 137))
+        p.closeSubpath()
+        return p
+    }
+}
+
+/// Curve vertices within [from, to] plus interpolated endpoints
+func samples(from: CGFloat, to: CGFloat) -> [(CGFloat, CGFloat)] {
+    var pts: [(CGFloat, CGFloat)] = [(from, rawY(atDay: from))]
+    for (vd, vy) in curveVertices where vd > from && vd < to {
+        pts.append((vd, vy))
+    }
+    pts.append((to, rawY(atDay: to)))
+    return pts
+}
+
+/// The fixed graph block (393x301): spend summary, sliding curve window,
+/// date-anchored annotation, and the scrollable date rail at the bottom.
 struct SpendGraphView: View {
     @State private var selectedDay = 23
+    @State private var windowStart = 18
     @State private var tooltipVisible = false
     @State private var dotDragMoved = false
 
-    /// vertical offset of the plot area inside the graph block
     private let plotTop: CGFloat = 132
     private let tooltipSize = CGSize(width: 110, height: 56)
     /// y where the date rail begins; the tooltip must stay above it
     private let railTop: CGFloat = 269
+    private let windowLast = 26
 
-    private var onChart: Bool { dayDeltas[selectedDay] != nil }
-
-    private var markerX: CGFloat { dayX(selectedDay) }
+    private var markerX: CGFloat {
+        windowX(day: CGFloat(selectedDay), offset: CGFloat(windowStart))
+    }
 
     private var dotCenter: CGPoint {
-        // day 23 pins to the exact dot position from the design
-        let y = selectedDay == 23 ? 132 : plotTop + curveY(at: markerX)
-        return CGPoint(x: markerX, y: y)
+        let b = normBounds(offset: CGFloat(windowStart))
+        // day vertices sit at d+0.008 (the design's half-pixel offset)
+        let y = normY(rawY(atDay: min(CGFloat(selectedDay) + 0.008, 31)), b)
+        return CGPoint(x: markerX, y: plotTop + y)
     }
 
     private var tooltipOrigin: CGPoint {
@@ -55,7 +114,7 @@ struct SpendGraphView: View {
             graphDot
             tooltip
 
-            DateRail(selectedDay: $selectedDay, onSelect: select(day:))
+            DateRail(selectedDay: $selectedDay, windowStart: $windowStart, onSelect: select(day:))
                 .offset(y: railTop)
         }
         .frame(width: 393, height: 301, alignment: .topLeading)
@@ -90,8 +149,7 @@ struct SpendGraphView: View {
 
     private var curveArea: some View {
         ZStack(alignment: .topLeading) {
-            // gradient fill under the curve (from the design's SVG)
-            areaPath
+            CurveAreaShape(offset: CGFloat(windowStart))
                 .fill(LinearGradient(
                     stops: [
                         .init(color: Palette.areaTint, location: 33.78 / 137),
@@ -100,36 +158,11 @@ struct SpendGraphView: View {
                     startPoint: .top,
                     endPoint: .bottom
                 ))
-            // the spend curve itself
-            linePath
+            CurveLineShape(offset: CGFloat(windowStart))
                 .stroke(Palette.wine, lineWidth: 1)
         }
-    }
-
-    private var areaPath: Path {
-        Path { p in
-            p.move(to: CGPoint(x: 10.1845, y: 136.068))
-            p.addLine(to: CGPoint(x: 0, y: 136.068))
-            p.addLine(to: CGPoint(x: 0, y: 137))
-            p.addLine(to: CGPoint(x: 393, y: 137))
-            p.addLine(to: CGPoint(x: 393, y: 0))
-            p.addLine(to: CGPoint(x: 341, y: 0))
-            p.addLine(to: CGPoint(x: 161, y: 55.2735))
-            p.addLine(to: CGPoint(x: 101, y: 61.2421))
-            p.addLine(to: CGPoint(x: 65.5, y: 116.497))
-            p.addLine(to: CGPoint(x: 41, y: 116.497))
-            p.closeSubpath()
-        }
-    }
-
-    private var linePath: Path {
-        Path { p in
-            p.move(to: CGPoint(x: 0.5, y: 137.478))
-            p.addLine(to: CGPoint(x: 0.5, y: 136.546))
-            for point in spendCurve.dropFirst() {
-                p.addLine(to: point)
-            }
-        }
+        .clipped()
+        .animation(.easeInOut(duration: 0.25), value: windowStart)
     }
 
     private var dashedMarker: some View {
@@ -140,9 +173,7 @@ struct SpendGraphView: View {
         .stroke(Palette.ink.opacity(0.1), style: StrokeStyle(lineWidth: 1, lineCap: .round, dash: [4, 4]))
         .frame(width: 1, height: 153)
         .offset(x: markerX - 0.5, y: plotTop)
-        .opacity(onChart ? 1 : 0)
         .animation(.easeInOut(duration: 0.25), value: markerX)
-        .animation(.easeInOut(duration: 0.25), value: onChart)
         .allowsHitTesting(false)
     }
 
@@ -175,9 +206,7 @@ struct SpendGraphView: View {
                 }
         )
         .position(dotCenter)
-        .opacity(onChart ? 1 : 0)
         .animation(.easeInOut(duration: 0.25), value: dotCenter)
-        .animation(.easeInOut(duration: 0.25), value: onChart)
     }
 
     private var tooltip: some View {
@@ -204,7 +233,7 @@ struct SpendGraphView: View {
                 .shadow(color: .black.opacity(0.02), radius: 1, x: 0, y: 2)
         )
         .offset(x: tooltipOrigin.x, y: tooltipOrigin.y)
-        .opacity(tooltipVisible && onChart ? 1 : 0)
+        .opacity(tooltipVisible ? 1 : 0)
         .animation(.easeInOut(duration: 0.25), value: tooltipVisible)
         .animation(tooltipVisible ? .easeInOut(duration: 0.25) : nil, value: tooltipOrigin)
         .allowsHitTesting(false)
@@ -213,22 +242,28 @@ struct SpendGraphView: View {
     // MARK: - Interaction
 
     private func pickDay(at x: CGFloat) {
-        let nearest = chartedDays.min(by: { abs(dayX($0) - x) < abs(dayX($1) - x) }) ?? 23
-        select(day: nearest)
+        let k = min(max(Int((x - 41) / 60 + 0.5), 0), 5)
+        select(day: windowStart + k)
     }
 
     private func select(day: Int) {
-        guard day != selectedDay else { return }
+        guard day != selectedDay, (1...31).contains(day) else { return }
         withAnimation(.easeInOut(duration: 0.25)) {
             selectedDay = day
-            if dayDeltas[day] == nil { tooltipVisible = false }
+            // slide the window so the selected date sits at its right edge,
+            // matching the design's default (day 23 at the end of the chart)
+            if day < windowStart || day > windowStart + 5 {
+                windowStart = min(max(day - 5, 1), windowLast)
+            }
         }
     }
 }
 
-/// Horizontally scrollable date rail; the graph above stays fixed.
+/// Horizontally scrollable date rail; tapping any date selects it and the
+/// chart window slides so the marker lands on that date.
 struct DateRail: View {
     @Binding var selectedDay: Int
+    @Binding var windowStart: Int
     var onSelect: (Int) -> Void
 
     var body: some View {
@@ -245,10 +280,25 @@ struct DateRail: View {
             }
             .frame(width: 393)
             .onAppear {
-                // start with days 18-23 placed exactly as in the design
-                // (day 23's cell center lands at x = 341)
-                proxy.scrollTo(23, anchor: UnitPoint(x: 0.8959, y: 0.5))
+                scrollToSelection(proxy, animated: false)
             }
+            .onChange(of: selectedDay) {
+                scrollToSelection(proxy, animated: true)
+            }
+        }
+    }
+
+    /// Aligns the rail with the chart window: day d at window position k
+    /// lands at x = k*60 + 41, exactly as in the design.
+    private func scrollToSelection(_ proxy: ScrollViewProxy, animated: Bool) {
+        let k = min(max(selectedDay - windowStart, 0), 5)
+        let anchor = UnitPoint(x: (27 + 60 * CGFloat(k)) / 365, y: 0.5)
+        if animated {
+            withAnimation(.easeInOut(duration: 0.25)) {
+                proxy.scrollTo(selectedDay, anchor: anchor)
+            }
+        } else {
+            proxy.scrollTo(selectedDay, anchor: anchor)
         }
     }
 
